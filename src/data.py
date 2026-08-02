@@ -8,14 +8,15 @@ SCHEMA_COLUMN_MAP = {
     "FTHG": "home_goals",
     "FTAG": "away_goals",
 
-    "B365H": "decision_odds_home",
-    "B365D": "decision_odds_draw",
-    "B365A": "decision_odds_away",
+    "AvgH": "decision_odds_home",
+    "AvgD": "decision_odds_draw",
+    "AvgA": "decision_odds_away",
 
-    "B365CH": "closing_odds_home",
-    "B365CD": "closing_odds_draw",
-    "B365CA": "closing_odds_away",
+    "AvgCH": "closing_odds_home",
+    "AvgCD": "closing_odds_draw",
+    "AvgCA": "closing_odds_away",
 }
+
 
 def load_football_data_csv(path: Path, season: str):
     raw = pd.read_csv(path)
@@ -25,6 +26,7 @@ def load_football_data_csv(path: Path, season: str):
     renamed = raw.rename(columns=SCHEMA_COLUMN_MAP)
     return renamed
 
+
 if __name__ == '__main__':
-    dataframe = load_football_data_csv(Path('../data/E0.csv') ,'24/25')
+    dataframe = load_football_data_csv(Path('../data/E0.csv'), '24/25')
     print(dataframe.head())
