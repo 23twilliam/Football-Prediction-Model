@@ -5,11 +5,6 @@ from poisson_model import simple_match_probs, fit_attack_defence, tau_correction
 
 matches = load_football_data_csv(Path('../data/E0.csv'), '24/25')
 
-lam = matches['home_goals'].mean()
-mu = matches['away_goals'].mean()
-
-# probs = simple_match_probs(lam, mu)
-
 teams, attack, defense, home_adv, rho = fit_attack_defence(matches)
 i = teams.index("Nott'm Forest")
 j = teams.index("Man United")

@@ -14,13 +14,13 @@ def tau_correction(x, y, lam, mu, rho):
 
     tau[m00] = 1 - lam[m00] * mu[m00] * rho
     tau[m01] = 1 + lam[m01] * rho
-    tau[m10] = 1 + lam[m10] * rho
+    tau[m10] = 1 + mu[m10] * rho
     tau[m11] = 1 - rho
 
     return tau
 
 
-def fit_attack_defence(matches_df: pd.DataFrame, l2_reg: int = 0.02):
+def fit_attack_defence(matches_df: pd.DataFrame, time_decay: int = 0.002, l2_reg: int = 0.02):
     teams = sorted(pd.concat([matches_df["home_team"], matches_df["away_team"]]).unique())
     team_to_idx = {team: i for i, team in enumerate(teams)}
     n_teams = len(teams)
@@ -31,6 +31,10 @@ def fit_attack_defence(matches_df: pd.DataFrame, l2_reg: int = 0.02):
 
     home_goals = matches_df['home_goals']
     away_goals = matches_df['away_goals']
+
+    latest_date = matches_df['date'].max()
+    days_ago = (latest_date - matches_df['date']).dt.days
+    weights = np.exp(-time_decay * days_ago)
 
     # Defined INSIDE since scipy.optimize.minimize will only ever call this as nll(params)
     def nll(params):
@@ -57,14 +61,14 @@ def fit_attack_defence(matches_df: pd.DataFrame, l2_reg: int = 0.02):
         penalty = l2_reg * (np.sum(attack ** 2) + np.sum(defence ** 2))
 
         # Negative log likelihood calculation
-        return -np.sum(np.log(p)) + penalty
+        return -np.sum(weights * np.log(p)) + penalty
 
     # Starting guess, all teams begin "equal" (zero attack, or defence) with a small nudge for home advantage,
     # must be same length as what nll expects above
     x0 = np.concatenate([np.zeros(n_teams), np.zeros(n_teams), [0.065], [0.0]])
 
     # Bounds for extremes
-    bounds = [(None, None)] * (2 * n_teams) + [(None, None)], (-0.3, 0.3)
+    bounds = [(None, None)] * (2 * n_teams) + [(None, None), (-0.3, 0.3)]
 
     # Walks until nll's gradient is zero.
     result = optimize.minimize(nll, x0, method='L-BFGS-B', bounds=bounds)  # quasi-Newton method, uses the gradient of
