@@ -20,7 +20,8 @@ def tau_correction(x, y, lam, mu, rho):
     return tau
 
 
-def fit_attack_defence(matches_df: pd.DataFrame, time_decay: int = 0.002, l2_reg: int = 0.02):
+def fit_attack_defence(matches_df: pd.DataFrame, time_decay: float = 0.002,
+                       l2_reg: float = 0.02):  #  l2_reg higher with less training data
     teams = sorted(pd.concat([matches_df["home_team"], matches_df["away_team"]]).unique())
     team_to_idx = {team: i for i, team in enumerate(teams)}
     n_teams = len(teams)
@@ -83,7 +84,7 @@ def fit_attack_defence(matches_df: pd.DataFrame, time_decay: int = 0.002, l2_reg
     return teams, attack, defence, home_adv, rho
 
 
-def simple_match_probs(lam: float, mu: float, max_goals: int = 10) -> dict:
+def simple_match_probs(lam: float, mu: float, max_goals: int = 20) -> dict:
     home_wins = 0
     draws = 0
     away_wins = 0
