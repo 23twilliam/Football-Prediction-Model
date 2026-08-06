@@ -84,13 +84,14 @@ def fit_attack_defence(matches_df: pd.DataFrame, time_decay: float = 0.002,
     return teams, attack, defence, home_adv, rho
 
 
-def simple_match_probs(lam: float, mu: float, max_goals: int = 20) -> dict:
+def simple_match_probs(lam: float, mu: float, rho: float, max_goals: int = 20) -> dict:
     home_wins = 0
     draws = 0
     away_wins = 0
     for x in range(max_goals):
         for y in range(max_goals):
-            joint_p = stats.poisson.pmf(x, lam) * stats.poisson.pmf(y, mu)
+            joint_p = (stats.poisson.pmf(x, lam) * stats.poisson.pmf(y, mu) *
+                       tau_correction(np.array([x]), np.array([y]), np.array([lam]), np.array([mu]), rho)[0])
             if x > y:
                 home_wins += joint_p
             elif x == y:

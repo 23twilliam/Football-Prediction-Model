@@ -3,9 +3,7 @@ import numpy as np
 from data import load_football_data_csv
 from poisson_model import simple_match_probs, fit_attack_defence
 import pandas as pd
-from staking import kelly_stake
 
-print(kelly_stake(model_prob=0.8, decimal_odds=3.00))
 
 matches = load_football_data_csv(Path('../data/E0.csv'), '24/25')
 
@@ -24,6 +22,6 @@ j = teams.index("B")
 lam = np.exp(attack[i] - defence[j] + home_adv)
 mu = np.exp(attack[j] - defence[i])
 
-probs = simple_match_probs(lam, mu)
+probs = simple_match_probs(lam, mu, rho)
 print(lam, mu)
 print(probs)
