@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.poisson_model import fit_attack_defence, simple_match_probs
+from poisson_model import fit_attack_defence, simple_match_probs
 
 def actual_outcome(home_goals, away_goals):
     if home_goals > away_goals:
@@ -53,11 +53,22 @@ def log_loss(actual_outcome, probs):
     return -np.log(probs[actual_outcome])
 
 def walk_forward_loop(matches_df):
-    training_days = 3
-    retrain_every_n_days = 2
+    training_days = 30
+    retrain_every_n_days = 15
+
+    min_edge = 0.02
+    balance = 1000
+
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
     last_date = matches_df.date.max()
+
+    log_loss_ = []
+    market_baseline = []
+
+    bet_profits = []
+    bet_returns = []
+    stakes = []
 
     while window_start < last_date:
         train_df = matches_df[matches_df['date'] < window_start].copy()
@@ -65,12 +76,11 @@ def walk_forward_loop(matches_df):
             (matches_df['date'] >= window_start) &
             (matches_df['date'] < window_start + pd.Timedelta(days=retrain_every_n_days))
         ]
+
         if len(train_df) < training_days or test_df.empty:
             window_start += pd.Timedelta(days=retrain_every_n_days)
             continue
         else:
-            log_loss_ = []
-            market_baseline = []
             teams, attack, defence, home_adv, rho = fit_attack_defence(train_df)
             for _, match in test_df.iterrows():
                 home_idx = teams.index(match["home_team"])
@@ -79,24 +89,55 @@ def walk_forward_loop(matches_df):
                 mu = np.exp(attack[away_idx] - defence[home_idx])
 
                 probs = simple_match_probs(lam=lam, mu=mu, rho=rho)
-                outcome = actual_outcome(match["home_goals"], match["away_goals"])
-                log_loss_.append(log_loss(actual_outcome=outcome, probs=probs))
-                market_baseline.append(log_loss(actual_outcome=outcome, probs=probs)) # TODO: Fix
 
+                raw_odds = {
+                    'Home': match['decision_odds_home'],
+                    'Draw': match['decision_odds_draw'],
+                    'Away': match['decision_odds_away'],
+                }
+                outcome = actual_outcome(match["home_goals"], match["away_goals"])
+
+                market_probs = devig(raw_odds)
+
+                log_loss_.append(log_loss(actual_outcome=outcome, probs=probs))
+                market_baseline.append(log_loss(actual_outcome=outcome, probs=market_probs))
+
+                best_outcome = None
+                best_edge = min_edge
+
+                for result in ['Home', 'Draw', 'Away']:
+                    edge = probs[result] - market_probs[result]
+
+                    if edge > best_edge:
+                        best_edge = edge
+                        best_outcome = result
+
+                if best_outcome is not None:
+                    odds = raw_odds[best_outcome]
+
+                    stake_fraction = kelly_stake(probs[best_outcome], odds)
+                    stake = balance * stake_fraction
+
+                    if outcome == best_outcome:
+                        profit = stake * (odds - 1)
+                    else:
+                        profit = -stake
+
+                    balance += profit
+
+                    bet_profits.append(profit)
+                    bet_returns.append(profit / stake if stake > 0 else 0)
+                    stakes.append(stake)
 
             window_start += pd.Timedelta(days=retrain_every_n_days)
 
-
-if __name__ == '__main__':
-    tiny_matches = pd.DataFrame([
-        {'date': pd.Timestamp('2024-08-01'), 'home_team': 'A', 'away_team': 'B', 'home_goals': 3, 'away_goals': 0},
-        {'date': pd.Timestamp('2024-08-08'), 'home_team': 'B', 'away_team': 'A', 'home_goals': 0, 'away_goals': 3},
-        {'date': pd.Timestamp('2024-08-15'), 'home_team': 'A', 'away_team': 'B', 'home_goals': 4, 'away_goals': 0},
-        {'date': pd.Timestamp('2024-08-01'), 'home_team': 'A', 'away_team': 'B', 'home_goals': 3, 'away_goals': 0},
-        {'date': pd.Timestamp('2024-08-08'), 'home_team': 'B', 'away_team': 'A', 'home_goals': 0, 'away_goals': 3},
-        {'date': pd.Timestamp('2024-08-15'), 'home_team': 'A', 'away_team': 'B', 'home_goals': 4, 'away_goals': 0},
-        {'date': pd.Timestamp('2024-08-01'), 'home_team': 'A', 'away_team': 'B', 'home_goals': 3, 'away_goals': 0},
-        {'date': pd.Timestamp('2024-08-08'), 'home_team': 'B', 'away_team': 'A', 'home_goals': 0, 'away_goals': 3},
-        {'date': pd.Timestamp('2024-08-15'), 'home_team': 'A', 'away_team': 'B', 'home_goals': 4, 'away_goals': 0},
-    ])
-    walk_forward_loop(tiny_matches)
+    return {
+        'avg_model_log_loss': np.mean(log_loss_),
+        'avg_market_log_loss': np.mean(market_baseline),
+        'n_bets': len(bet_profits),
+        'total_profit': sum(bet_profits),
+        'roi': sum(bet_profits) / sum(stakes) if stakes else None,
+        'max_drawdown': max_drawdown(bet_profits) if bet_profits else None,
+        'sharpe_ratio': sharpe_ratio(bet_returns) if len(bet_returns) > 1 else None,
+        'final_balance': balance,
+    }
