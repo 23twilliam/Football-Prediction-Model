@@ -27,6 +27,20 @@ def load_football_data_csv(path: Path, season: str):
     return renamed
 
 
+def build_team_events(matches_df: pd.DataFrame):
+    home_events = matches_df[['date', 'home_team', 'home_goals', 'away_goals']].rename(
+        columns={'home_team': 'team', 'home_goals': 'goals_for', 'away_goals': 'goals_against'}
+    )
+    away_events = matches_df[['date', 'away_team', 'away_goals', 'home_goals']].rename(
+        columns={'away_team': 'team', 'away_goals': 'goals_for', 'home_goals': 'goals_against'}
+    )
+
+    team_events = pd.concat([home_events, away_events])
+    team_events = team_events.sort_values(by=['team', 'date']).reset_index(drop=True)
+
+    return team_events
+
+
 if __name__ == '__main__':
     dataframe = load_football_data_csv(Path('../data/E0.csv'), '24/25')
     print(dataframe.head())
