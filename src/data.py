@@ -38,6 +38,21 @@ def build_team_events(matches_df: pd.DataFrame):
     team_events = pd.concat([home_events, away_events])
     team_events = team_events.sort_values(by=['team', 'date']).reset_index(drop=True)
 
+    # Added features of team events
+    team_events['rolling_goals_for'] = team_events.groupby('team')['goals_for'].transform(
+        lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+    )
+
+    team_events['rolling_goals_against'] = team_events.groupby('team')['goals_against'].transform(
+        lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+    )
+
+    team_events['days_since_last'] = team_events.groupby('team')['date'].diff().dt.days
+
+    team_events['matches_last_14d'] = team_events.groupby('team').apply(
+        lambda x: x.set_index('date')['team'].rolling('14D', closed='left').count()
+    ).reset_index(level=0, drop=True).fillna(0)
+
     return team_events
 
 
