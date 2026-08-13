@@ -17,6 +17,30 @@ SCHEMA_COLUMN_MAP = {
     "AvgCA": "closing_odds_away",
 }
 
+def merge_team_events(matches_df: pd.DataFrame, team_events: pd.DataFrame) -> pd.DataFrame:
+    feature_cols = ['team', 'date', 'rolling_mean_goals_for', 'rolling_mean_goals_against',
+                    'days_since_last', 'matches_last_14d']
+
+    home_events = team_events[feature_cols].rename(columns={
+        'team': 'home_team',
+        'rolling_mean_goals_for': 'home_rolling_mean_goals_for',
+        'rolling_mean_goals_against': 'home_rolling_mean_goals_against',
+        'days_since_last': 'home_days_since_last',
+        'matches_last_14d': 'home_matches_last_14d',
+    })
+    matches_df = matches_df.merge(home_events, how='left', on=['home_team', 'date'])
+
+    away_events = team_events[feature_cols].rename(columns={
+        'team': 'away_team',
+        'rolling_mean_goals_for': 'away_rolling_mean_goals_for',
+        'rolling_mean_goals_against': 'away_rolling_mean_goals_against',
+        'days_since_last': 'away_days_since_last',
+        'matches_last_14d': 'away_matches_last_14d',
+    })
+    matches_df = matches_df.merge(away_events, how='left', on=['away_team', 'date'])
+
+    return matches_df
+
 
 def load_football_data_csv(path: Path, season: str):
     raw = pd.read_csv(path)
@@ -39,23 +63,27 @@ def build_team_events(matches_df: pd.DataFrame):
     team_events = team_events.sort_values(by=['team', 'date']).reset_index(drop=True)
 
     # Added features of team events
-    team_events['rolling_goals_for'] = team_events.groupby('team')['goals_for'].transform(
+    team_events['rolling_mean_goals_for'] = team_events.groupby('team')['goals_for'].transform(
         lambda x: x.shift(1).rolling(5, min_periods=1).mean()
     )
 
-    team_events['rolling_goals_against'] = team_events.groupby('team')['goals_against'].transform(
+    team_events['rolling_mean_goals_against'] = team_events.groupby('team')['goals_against'].transform(
         lambda x: x.shift(1).rolling(5, min_periods=1).mean()
     )
 
     team_events['days_since_last'] = team_events.groupby('team')['date'].diff().dt.days
 
-    team_events['matches_last_14d'] = team_events.groupby('team').apply(
+    team_events['matches_last_14d'] = team_events.groupby('team', group_keys=False).apply(
         lambda x: x.set_index('date')['team'].rolling('14D', closed='left').count()
-    ).reset_index(level=0, drop=True).fillna(0)
+    ).reset_index(level=0, drop=True).fillna(0).values
 
     return team_events
 
 
 if __name__ == '__main__':
-    dataframe = load_football_data_csv(Path('../data/E0.csv'), '24/25')
-    print(dataframe.head())
+    matches = load_football_data_csv(Path('../data/E0.csv'), '24/25')
+    team_events = build_team_events(matches)
+    matches = merge_team_events(matches, team_events)
+
+    matches.to_csv('../data/test.csv', index=False)
+    print(matches.head(20))
