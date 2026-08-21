@@ -70,9 +70,9 @@ def predict_match(
     probabilities = model.predict_proba(X)[0]
 
     return {
-        "Home": probabilities[2],
+        "Home": probabilities[0],
         "Draw": probabilities[1],
-        "Away": probabilities[0]
+        "Away": probabilities[2]
     }
 
 if __name__ == '__main__':
