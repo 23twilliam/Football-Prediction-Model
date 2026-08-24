@@ -21,17 +21,17 @@ def prepare_data(matches: pd.DataFrame) -> pd.DataFrame:
     matches = matches.copy()
 
     team_events = build_team_events(matches)
-    matches_df = merge_team_events(matches, team_events)
+    matches = merge_team_events(matches, team_events)
 
-    matches_df["result"] = np.select(
-        [matches_df["home_goals"] > matches_df["away_goals"],
-         matches_df["home_goals"] == matches_df["away_goals"],
-         matches_df["home_goals"] < matches_df["away_goals"]],
+    matches["result"] = np.select(
+        [matches["home_goals"] > matches["away_goals"],
+         matches["home_goals"] == matches["away_goals"],
+         matches["home_goals"] < matches["away_goals"]],
         [0, 1, 2],
         default=1
     )
 
-    return matches_df
+    return matches
 
 
 def fit_classifier(
