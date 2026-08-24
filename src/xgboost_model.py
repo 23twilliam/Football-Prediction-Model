@@ -5,8 +5,15 @@ from pathlib import Path
 
 from data import load_football_data_csv, build_team_events, merge_team_events
 
+FEATURE_COLS = [
+    'home_rolling_mean_goals_for', 'home_rolling_mean_goals_against',
+    'home_days_since_last', 'home_matches_last_14d',
+    'away_rolling_mean_goals_for', 'away_rolling_mean_goals_against',
+    'away_days_since_last', 'away_matches_last_14d',
+]
 
-def prepare_data(matches: pd.DataFrame):
+
+def prepare_data(matches: pd.DataFrame) -> pd.DataFrame:
     # 0 home
     # 1 draw
     # 2 away
@@ -35,15 +42,8 @@ def fit_classifier(
         subsample: float = 0.8,
         colsample_bytree: float = 0.8
 ):
-    matches_df = prepare_data(matches_df)
-    features = [
-        'home_rolling_mean_goals_for', 'home_rolling_mean_goals_against',
-        'home_days_since_last', 'home_matches_last_14d',
-        'away_rolling_mean_goals_for', 'away_rolling_mean_goals_against',
-        'away_days_since_last', 'away_matches_last_14d',
-    ]
-
-    x = matches_df[features].copy()
+    """matches_df must already be prepared via prepare_data()."""
+    x = matches_df[FEATURE_COLS]
     y = matches_df["result"]
 
     model = XGBClassifier(
@@ -78,23 +78,13 @@ def predict_match(
 
 
 if __name__ == '__main__':
-    matches_df = load_football_data_csv(Path('../data/E0.csv'), '24/25')
-    team_events = build_team_events(matches_df)
-    print("team_events columns:", team_events.columns.tolist())
-
-    merged = merge_team_events(matches_df, team_events)
-    print("merged columns:", merged.columns.tolist())
+    raw_matches = load_football_data_csv(Path('../data/E0.csv'), '24/25')
+    matches_df = prepare_data(raw_matches)
 
     model = fit_classifier(matches_df)
-    feature_cols = [
-        'home_rolling_mean_goals_for', 'home_rolling_mean_goals_against',
-        'home_days_since_last', 'home_matches_last_14d',
-        'away_rolling_mean_goals_for', 'away_rolling_mean_goals_against',
-        'away_days_since_last', 'away_matches_last_14d',
-    ]
 
-    for idx in merged.index:
-        x_row = merged.loc[[idx], feature_cols]
+    for idx in matches_df.index:
+        x_row = matches_df.loc[[idx], FEATURE_COLS]
         probs = predict_match(model, x_row)
 
         print(probs)
