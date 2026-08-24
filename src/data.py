@@ -73,9 +73,10 @@ def build_team_events(matches_df: pd.DataFrame):
 
     team_events['days_since_last'] = team_events.groupby('team')['date'].diff().dt.days
 
-    team_events['matches_last_14d'] = team_events.groupby('team', group_keys=False).apply(
-        lambda x: x.set_index('date')['team'].rolling('14D', closed='left').count()
-    ).reset_index(level=0, drop=True).fillna(0).values
+    team_events['_match_count_helper'] = 1
+    result = team_events.groupby('team').rolling('14D', on='date', closed='left')['_match_count_helper'].count()
+    team_events['matches_last_14d'] = result.fillna(0).values
+    team_events = team_events.drop(columns='_match_count_helper')
 
     return team_events
 
