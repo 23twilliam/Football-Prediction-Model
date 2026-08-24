@@ -144,11 +144,7 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
     last_date = matches_df.date.max()
 
-    log_loss_ = []
-    market_baseline = []
-    bet_profits = []
-    bet_returns = []
-    stakes = []
+    records = []
 
     while window_start < last_date:
         train_df = matches_df[matches_df['date'] < window_start].copy()
@@ -171,34 +167,63 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
             outcome = actual_outcome(match["home_goals"], match["away_goals"])
             market_probs = devig(raw_odds)
 
-            log_loss_.append(log_loss(actual_outcome=outcome, probs=probs))
-            market_baseline.append(log_loss(actual_outcome=outcome, probs=market_probs))
-
             best_outcome, best_edge = None, min_edge
             for result in ['Home', 'Draw', 'Away']:
                 edge = probs[result] - market_probs[result]
                 if edge > best_edge:
                     best_edge, best_outcome = edge, result
 
+            stake = profit = 0.0
+            bet_return = np.nan
             if best_outcome is not None:
                 odds = raw_odds[best_outcome]
                 stake = balance * kelly_stake(probs[best_outcome], odds)
                 profit = stake * (odds - 1) if outcome == best_outcome else -stake
                 balance += profit
-                bet_profits.append(profit)
-                bet_returns.append(profit / stake if stake > 0 else 0)
+                bet_return = profit / stake if stake > 0 else 0.0
 
-                stakes.append(stake)
+            records.append({
+                'date': match['date'],
+                'home_team': match['home_team'],
+                'away_team': match['away_team'],
+                'home_goals': match['home_goals'],
+                'away_goals': match['away_goals'],
+                'margin': abs(match['home_goals'] - match['away_goals']),
+                'actual_outcome': outcome,
+                'prob_home': probs['Home'], 'prob_draw': probs['Draw'], 'prob_away': probs['Away'],
+                'market_home': market_probs['Home'], 'market_draw': market_probs['Draw'], 'market_away': market_probs['Away'],
+                'model_log_loss': log_loss(actual_outcome=outcome, probs=probs),
+                'market_log_loss': log_loss(actual_outcome=outcome, probs=market_probs),
+                'best_outcome': best_outcome,
+                'best_edge': best_edge if best_outcome is not None else np.nan,
+                'bet_placed': best_outcome is not None,
+                'stake': stake,
+                'profit': profit,
+                'bet_return': bet_return,
+            })
 
         window_start += pd.Timedelta(days=retrain_every_n_days)
 
+    return pd.DataFrame.from_records(records)
+
+
+def summarize_backtest(records: pd.DataFrame, starting_balance=1000) -> dict:
+    bets = records[records['bet_placed']]
+    bet_profits = bets['profit'].tolist()
+    bet_returns = bets['bet_return'].tolist()
+
     return {
-        'avg_model_log_loss': np.mean(log_loss_),
-        'avg_market_log_loss': np.mean(market_baseline),
-        'n_bets': len(bet_profits),
-        'total_profit': sum(bet_profits),
-        'roi': sum(bet_profits) / sum(stakes) if stakes else None,
+        'avg_model_log_loss': records['model_log_loss'].mean(),
+        'avg_market_log_loss': records['market_log_loss'].mean(),
+        'n_bets': len(bets),
+        'total_profit': bets['profit'].sum(),
+        'roi': bets['profit'].sum() / bets['stake'].sum() if len(bets) else None,
         'max_drawdown': max_drawdown(bet_profits) if bet_profits else None,
         'sharpe_ratio': sharpe_ratio(bet_returns) if len(bet_returns) > 1 else None,
-        'final_balance': balance
+        'final_balance': starting_balance + bets['profit'].sum(),
     }
+
+
+def xgb_walk_forward(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02, balance=1000):
+    records = xgb_walk_forward_loop(matches_df, training_days, retrain_every_n_days, min_edge, balance)
+    return summarize_backtest(records, starting_balance=balance)
