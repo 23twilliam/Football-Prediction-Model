@@ -12,6 +12,16 @@ FEATURE_COLS = [
     'away_days_since_last', 'away_matches_last_14d',
 ]
 
+ODDS_COLS = ['decision_odds_home', 'decision_odds_draw', 'decision_odds_away']  # class order 0=Home,1=Draw,2=Away
+
+
+def market_base_margin(matches_df: pd.DataFrame) -> np.ndarray:
+    """Raw per-class log-odds implied by the bookmaker's odds (log(1/odds), un-devigged).
+    Passed to XGBoost as base_margin: softmax renormalises automatically, so softmax of this
+    reproduces the devigged market probabilities exactly as the model's starting point:
+    trees then only need to fit the residual against the market."""
+    return -np.log(matches_df[ODDS_COLS].to_numpy())
+
 
 def prepare_data(matches: pd.DataFrame) -> pd.DataFrame:
     # 0 home
@@ -47,6 +57,7 @@ def fit_classifier(
     """matches_df must already be prepared via prepare_data()."""
     x = matches_df[FEATURE_COLS]
     y = matches_df["result"]
+    base_margin = market_base_margin(matches_df)
 
     model = XGBClassifier(
         objective="multi:softprob",
@@ -63,16 +74,17 @@ def fit_classifier(
         random_state=42
     )
 
-    model.fit(x, y)
+    model.fit(x, y, base_margin=base_margin)
 
     return model
 
 
 def predict_match(
         model,
-        x_row
+        x_row,
+        base_margin
 ):
-    probabilities = model.predict_proba(x_row)[0]
+    probabilities = model.predict_proba(x_row, base_margin=base_margin)[0]
 
     return {
         "Home": probabilities[0],
@@ -88,7 +100,7 @@ if __name__ == '__main__':
     model = fit_classifier(matches_df)
 
     for idx in matches_df.index:
-        x_row = matches_df.loc[[idx], FEATURE_COLS]
-        probs = predict_match(model, x_row)
+        row = matches_df.loc[[idx]]
+        probs = predict_match(model, row[FEATURE_COLS], market_base_margin(row))
 
         print(probs)

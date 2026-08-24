@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from poisson_model import fit_attack_defence, simple_match_probs
-from xgboost_model import prepare_data, fit_classifier, predict_match, FEATURE_COLS
+from xgboost_model import prepare_data, fit_classifier, predict_match, FEATURE_COLS, market_base_margin
 
 def actual_outcome(home_goals, away_goals):
     if home_goals > away_goals:
@@ -160,8 +160,8 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
         model = fit_classifier(train_df)
 
         for idx, match in test_df.iterrows():
-            x_row = test_df.loc[[idx], FEATURE_COLS]
-            probs = predict_match(model, x_row)
+            row = test_df.loc[[idx]]
+            probs = predict_match(model, row[FEATURE_COLS], market_base_margin(row))
 
             raw_odds = {'Home': match['decision_odds_home'], 'Draw': match['decision_odds_draw'], 'Away': match['decision_odds_away']}
             outcome = actual_outcome(match["home_goals"], match["away_goals"])
