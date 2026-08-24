@@ -138,7 +138,7 @@ def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, 
         'final_balance': balance,
     }
 
-def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02, balance=1000):
+def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=10, min_edge=0.02, balance=1000):
     matches_df = prepare_data(matches_df)   # ONCE, globally, before any slicing
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)

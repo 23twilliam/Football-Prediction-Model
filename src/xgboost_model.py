@@ -36,11 +36,13 @@ def prepare_data(matches: pd.DataFrame) -> pd.DataFrame:
 
 def fit_classifier(
         matches_df: pd.DataFrame,
-        n_estimators: int = 200,
-        max_depth: int = 8,
+        n_estimators: int = 150,
+        max_depth: int = 1,
         learning_rate: float = 0.1,
         subsample: float = 0.8,
-        colsample_bytree: float = 0.8
+        colsample_bytree: float = 0.8,
+        min_child_weight: float = 30,
+        reg_lambda: float = 5,
 ):
     """matches_df must already be prepared via prepare_data()."""
     x = matches_df[FEATURE_COLS]
@@ -54,6 +56,8 @@ def fit_classifier(
         learning_rate=learning_rate,
         subsample=subsample,
         colsample_bytree=colsample_bytree,
+        min_child_weight=min_child_weight,
+        reg_lambda=reg_lambda,
 
         eval_metric="mlogloss",
         random_state=42

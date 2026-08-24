@@ -18,26 +18,36 @@ SCHEMA_COLUMN_MAP = {
 }
 
 def merge_team_events(matches_df: pd.DataFrame, team_events: pd.DataFrame) -> pd.DataFrame:
-    feature_cols = ['team', 'date', 'rolling_mean_goals_for', 'rolling_mean_goals_against',
-                    'days_since_last', 'matches_last_14d']
+    recency_cols = ['team', 'date', 'days_since_last', 'matches_last_14d']
 
-    home_events = team_events[feature_cols].rename(columns={
+    home_recency = team_events[recency_cols].rename(columns={
         'team': 'home_team',
-        'rolling_mean_goals_for': 'home_rolling_mean_goals_for',
-        'rolling_mean_goals_against': 'home_rolling_mean_goals_against',
         'days_since_last': 'home_days_since_last',
         'matches_last_14d': 'home_matches_last_14d',
     })
-    matches_df = matches_df.merge(home_events, how='left', on=['home_team', 'date'])
+    matches_df = matches_df.merge(home_recency, how='left', on=['home_team', 'date'])
 
-    away_events = team_events[feature_cols].rename(columns={
+    away_recency = team_events[recency_cols].rename(columns={
         'team': 'away_team',
-        'rolling_mean_goals_for': 'away_rolling_mean_goals_for',
-        'rolling_mean_goals_against': 'away_rolling_mean_goals_against',
         'days_since_last': 'away_days_since_last',
         'matches_last_14d': 'away_matches_last_14d',
     })
-    matches_df = matches_df.merge(away_events, how='left', on=['away_team', 'date'])
+    matches_df = matches_df.merge(away_recency, how='left', on=['away_team', 'date'])
+    form_cols = ['team', 'date', 'rolling_mean_goals_for', 'rolling_mean_goals_against']
+
+    home_form = team_events[team_events['venue'] == 'home'][form_cols].rename(columns={
+        'team': 'home_team',
+        'rolling_mean_goals_for': 'home_rolling_mean_goals_for',
+        'rolling_mean_goals_against': 'home_rolling_mean_goals_against',
+    })
+    matches_df = matches_df.merge(home_form, how='left', on=['home_team', 'date'])
+
+    away_form = team_events[team_events['venue'] == 'away'][form_cols].rename(columns={
+        'team': 'away_team',
+        'rolling_mean_goals_for': 'away_rolling_mean_goals_for',
+        'rolling_mean_goals_against': 'away_rolling_mean_goals_against',
+    })
+    matches_df = matches_df.merge(away_form, how='left', on=['away_team', 'date'])
 
     return matches_df
 
@@ -55,19 +65,19 @@ def build_team_events(matches_df: pd.DataFrame):
     home_events = matches_df[['date', 'home_team', 'home_goals', 'away_goals']].rename(
         columns={'home_team': 'team', 'home_goals': 'goals_for', 'away_goals': 'goals_against'}
     )
+    home_events['venue'] = 'home'
     away_events = matches_df[['date', 'away_team', 'away_goals', 'home_goals']].rename(
         columns={'away_team': 'team', 'away_goals': 'goals_for', 'home_goals': 'goals_against'}
     )
+    away_events['venue'] = 'away'
 
     team_events = pd.concat([home_events, away_events])
     team_events = team_events.sort_values(by=['team', 'date']).reset_index(drop=True)
-
-    # Added features of team events
-    team_events['rolling_mean_goals_for'] = team_events.groupby('team')['goals_for'].transform(
+    team_events['rolling_mean_goals_for'] = team_events.groupby(['team', 'venue'])['goals_for'].transform(
         lambda x: x.shift(1).rolling(5, min_periods=1).mean()
     )
 
-    team_events['rolling_mean_goals_against'] = team_events.groupby('team')['goals_against'].transform(
+    team_events['rolling_mean_goals_against'] = team_events.groupby(['team', 'venue'])['goals_against'].transform(
         lambda x: x.shift(1).rolling(5, min_periods=1).mean()
     )
 
