@@ -138,7 +138,7 @@ def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, 
         'final_balance': balance,
     }
 
-def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=90, retrain_every_n_days=6, min_edge=0.02, balance=1000):
+def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02, balance=1000):
     matches_df = prepare_data(matches_df)   # ONCE, globally, before any slicing
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
@@ -148,6 +148,7 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=90, retrain_ev
     market_baseline = []
     bet_profits = []
     bet_returns = []
+    stakes = []
 
     while window_start < last_date:
         train_df = matches_df[matches_df['date'] < window_start].copy()
@@ -187,6 +188,8 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=90, retrain_ev
                 bet_profits.append(profit)
                 bet_returns.append(profit / stake if stake > 0 else 0)
 
+                stakes.append(stake)
+
         window_start += pd.Timedelta(days=retrain_every_n_days)
 
     return {
@@ -194,8 +197,8 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=90, retrain_ev
         'avg_market_log_loss': np.mean(market_baseline),
         'n_bets': len(bet_profits),
         'total_profit': sum(bet_profits),
-        'roi': sum(bet_profits) / sum(abs(p) for p in bet_profits) if bet_profits else None,
+        'roi': sum(bet_profits) / sum(stakes) if stakes else None,
         'max_drawdown': max_drawdown(bet_profits) if bet_profits else None,
         'sharpe_ratio': sharpe_ratio(bet_returns) if len(bet_returns) > 1 else None,
-        'final_balance': balance,
+        'final_balance': balance
     }
