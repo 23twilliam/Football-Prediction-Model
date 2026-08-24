@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from poisson_model import fit_attack_defence, simple_match_probs
+from xgboost_model import prepare_data, fit_classifier, predict_match, FEATURE_COLS
 
 def actual_outcome(home_goals, away_goals):
     if home_goals > away_goals:
@@ -52,12 +53,7 @@ def sharpe_ratio(returns):
 def log_loss(actual_outcome, probs):
     return -np.log(probs[actual_outcome])
 
-def walk_forward_loop(matches_df):
-    training_days = 30
-    retrain_every_n_days = 15
-
-    min_edge = 0.02
-    balance = 1000
+def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, retrain_every_n_days = 15, min_edge = 0.02, balance = 1000):
 
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
@@ -137,6 +133,68 @@ def walk_forward_loop(matches_df):
         'n_bets': len(bet_profits),
         'total_profit': sum(bet_profits),
         'roi': sum(bet_profits) / sum(stakes) if stakes else None,
+        'max_drawdown': max_drawdown(bet_profits) if bet_profits else None,
+        'sharpe_ratio': sharpe_ratio(bet_returns) if len(bet_returns) > 1 else None,
+        'final_balance': balance,
+    }
+
+def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=90, retrain_every_n_days=6, min_edge=0.02, balance=1000):
+    matches_df = prepare_data(matches_df)   # ONCE, globally, before any slicing
+    matches_df = matches_df.sort_values(by=['date'])
+    window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
+    last_date = matches_df.date.max()
+
+    log_loss_ = []
+    market_baseline = []
+    bet_profits = []
+    bet_returns = []
+
+    while window_start < last_date:
+        train_df = matches_df[matches_df['date'] < window_start].copy()
+        test_df = matches_df[
+            (matches_df['date'] >= window_start) &
+            (matches_df['date'] < window_start + pd.Timedelta(days=retrain_every_n_days))
+        ]
+
+        if len(train_df) < training_days or test_df.empty:
+            window_start += pd.Timedelta(days=retrain_every_n_days)
+            continue
+
+        model = fit_classifier(train_df)
+
+        for idx, match in test_df.iterrows():
+            x_row = test_df.loc[[idx], FEATURE_COLS]
+            probs = predict_match(model, x_row)
+
+            raw_odds = {'Home': match['decision_odds_home'], 'Draw': match['decision_odds_draw'], 'Away': match['decision_odds_away']}
+            outcome = actual_outcome(match["home_goals"], match["away_goals"])
+            market_probs = devig(raw_odds)
+
+            log_loss_.append(log_loss(actual_outcome=outcome, probs=probs))
+            market_baseline.append(log_loss(actual_outcome=outcome, probs=market_probs))
+
+            best_outcome, best_edge = None, min_edge
+            for result in ['Home', 'Draw', 'Away']:
+                edge = probs[result] - market_probs[result]
+                if edge > best_edge:
+                    best_edge, best_outcome = edge, result
+
+            if best_outcome is not None:
+                odds = raw_odds[best_outcome]
+                stake = balance * kelly_stake(probs[best_outcome], odds)
+                profit = stake * (odds - 1) if outcome == best_outcome else -stake
+                balance += profit
+                bet_profits.append(profit)
+                bet_returns.append(profit / stake if stake > 0 else 0)
+
+        window_start += pd.Timedelta(days=retrain_every_n_days)
+
+    return {
+        'avg_model_log_loss': np.mean(log_loss_),
+        'avg_market_log_loss': np.mean(market_baseline),
+        'n_bets': len(bet_profits),
+        'total_profit': sum(bet_profits),
+        'roi': sum(bet_profits) / sum(abs(p) for p in bet_profits) if bet_profits else None,
         'max_drawdown': max_drawdown(bet_profits) if bet_profits else None,
         'sharpe_ratio': sharpe_ratio(bet_returns) if len(bet_returns) > 1 else None,
         'final_balance': balance,
