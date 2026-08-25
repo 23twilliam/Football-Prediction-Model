@@ -15,6 +15,18 @@ SCHEMA_COLUMN_MAP = {
     "AvgCH": "closing_odds_home",
     "AvgCD": "closing_odds_draw",
     "AvgCA": "closing_odds_away",
+
+    # Best price across all books (~1% overround) and Pinnacle (sharpest single book, ~3.6%).
+    # Avg is the average across books (~4.5%) -- nobody actually bets at the average, so these
+    # exist to settle bets at a realistic achievable price.
+    # a better *price* is not a better *probability estimate*.
+    "MaxH": "best_odds_home",
+    "MaxD": "best_odds_draw",
+    "MaxA": "best_odds_away",
+
+    "PSH": "pinnacle_odds_home",
+    "PSD": "pinnacle_odds_draw",
+    "PSA": "pinnacle_odds_away",
 }
 
 def merge_team_events(matches_df: pd.DataFrame, team_events: pd.DataFrame) -> pd.DataFrame:

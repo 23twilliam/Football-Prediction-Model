@@ -13,6 +13,18 @@ def actual_outcome(home_goals, away_goals):
     else:
         return 'Away'
 
+ODDS_SOURCES = {
+    'decision': ('decision_odds_home', 'decision_odds_draw', 'decision_odds_away'),   # Avg, ~4.5% vig
+    'best':     ('best_odds_home', 'best_odds_draw', 'best_odds_away'),               # Max, ~1.0% vig
+    'pinnacle': ('pinnacle_odds_home', 'pinnacle_odds_draw', 'pinnacle_odds_away'),   # ~3.6% vig
+}
+
+
+def odds_from(match, source: str) -> dict:
+    home_col, draw_col, away_col = ODDS_SOURCES[source]
+    return {'Home': match[home_col], 'Draw': match[draw_col], 'Away': match[away_col]}
+
+
 def devig(raw_odds):
     # Convert each to implied probabilit
     home = 1 / raw_odds["Home"]
@@ -29,16 +41,7 @@ def devig(raw_odds):
 
     return {'Home': home, 'Draw': draw, 'Away': away}
 
-def conservative_prob(mean_prob: float, std: float, certainty_cap: float = 0.75) -> float:
-    """Risk-adjusted probability used for betting decisions
-    1. Shrink by one ensemble standard deviation distrust bets where the models
-       disagree with each other
-    2. A hard ceiling regardless of agreement
-    """
-    return min(max(mean_prob - std, 0.0), certainty_cap)
-
-
-def kelly_stake(model_prob, decimal_odds, fraction: float= 0.25, cap = 0.025):
+def kelly_stake(model_prob, decimal_odds, fraction: float= 0.25, cap = 0.01):
     b = decimal_odds - 1 # Net odds, profit per unit staked if win
     edge = model_prob * decimal_odds - 1
     if edge <= 0:
@@ -150,7 +153,10 @@ def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, 
     }
 
 def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=10, min_edge=0.02,
-                          max_edge=0.06, balance=1000):
+                          balance=1000, settlement_odds='decision'):
+    """settlement_odds selects the price bets are PAID at ('decision'/'best'/'pinnacle').
+    The devig anchor stays on decision odds regardless, so predictions, log loss and bet
+    selection are identical across settlement choices."""
     matches_df = prepare_data(matches_df)   # ONCE, globally, before any slicing
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
@@ -175,29 +181,22 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
             row = test_df.loc[[idx]]
             probs, uncertainty = predict_match_ensemble(models, row[FEATURE_COLS], market_base_margin(row))
 
-            raw_odds = {'Home': match['decision_odds_home'], 'Draw': match['decision_odds_draw'], 'Away': match['decision_odds_away']}
+            raw_odds = odds_from(match, 'decision')        # probability anchor
+            settle_odds = odds_from(match, settlement_odds)  # what the bet actually pays
             outcome = actual_outcome(match["home_goals"], match["away_goals"])
             market_probs = devig(raw_odds)
 
-            # Bet selection and sizing both act on the risk-adjusted probability
-            # calibration signal, unaffected by staking policy.
-            conservative_probs = {r: conservative_prob(probs[r], uncertainty[r]) for r in ['Home', 'Draw', 'Away']}
-
-            # Edges beyond max_edge are excluded: since the three edges
-            # sum to zero (model and market probabilities each sum to 1), an implausibly large
-            # edge is the only candidate most matches ever produce, so this mostly means
-            # skipping the match
             best_outcome, best_edge = None, min_edge
             for result in ['Home', 'Draw', 'Away']:
-                edge = conservative_probs[result] - market_probs[result]
-                if min_edge < edge <= max_edge and edge > best_edge:
+                edge = probs[result] - market_probs[result]
+                if edge > best_edge:
                     best_edge, best_outcome = edge, result
 
             stake = profit = 0.0
             bet_return = np.nan
             if best_outcome is not None:
-                odds = raw_odds[best_outcome]
-                stake = balance * kelly_stake(conservative_probs[best_outcome], odds)
+                odds = settle_odds[best_outcome]
+                stake = balance * kelly_stake(probs[best_outcome], odds)
                 profit = stake * (odds - 1) if outcome == best_outcome else -stake
                 balance += profit
                 bet_return = profit / stake if stake > 0 else 0.0
@@ -221,6 +220,9 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
                 'stake': stake,
                 'profit': profit,
                 'bet_return': bet_return,
+                'odds_decision': raw_odds[best_outcome] if best_outcome else np.nan,
+                'odds_best': odds_from(match, 'best')[best_outcome] if best_outcome else np.nan,
+                'odds_pinnacle': odds_from(match, 'pinnacle')[best_outcome] if best_outcome else np.nan,
             })
 
         window_start += pd.Timedelta(days=retrain_every_n_days)
@@ -245,10 +247,10 @@ def summarize_backtest(records: pd.DataFrame, starting_balance=1000) -> dict:
     }
 
 
-def xgb_walk_forward(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02, max_edge=0.06,
-                     balance=1000):
+def xgb_walk_forward(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02,
+                     balance=1000, settlement_odds='decision'):
     records = xgb_walk_forward_loop(
         matches_df, training_days=training_days, retrain_every_n_days=retrain_every_n_days,
-        min_edge=min_edge, max_edge=max_edge, balance=balance,
+        min_edge=min_edge, balance=balance, settlement_odds=settlement_odds,
     )
     return summarize_backtest(records, starting_balance=balance)
