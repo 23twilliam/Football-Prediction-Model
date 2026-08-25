@@ -1,2 +1,2 @@
 # Football-Prediction-Model
-A naive prediction model for football matches
+A XGBoost based prediction model for football matches
