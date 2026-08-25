@@ -61,6 +61,15 @@ def load_football_data_csv(path: Path, season: str):
     return renamed
 
 
+def load_seasons(data_dir: Path, filenames_and_seasons) -> pd.DataFrame:
+    """Loads and concatenates multiple seasons' CSVs into one date-sorted frame. Rolling/recency
+    features (build_team_events) then naturally carry a promoted/relegated team's missing prior
+    top-flight history as NaN, and a returning team's rolling form across the summer break.
+    """
+    frames = [load_football_data_csv(data_dir / fname, season) for fname, season in filenames_and_seasons]
+    return pd.concat(frames, ignore_index=True).sort_values('date').reset_index(drop=True)
+
+
 def build_team_events(matches_df: pd.DataFrame):
     home_events = matches_df[['date', 'home_team', 'home_goals', 'away_goals']].rename(
         columns={'home_team': 'team', 'home_goals': 'goals_for', 'away_goals': 'goals_against'}

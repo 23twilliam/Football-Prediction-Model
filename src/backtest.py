@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 
 from poisson_model import fit_attack_defence, simple_match_probs
-from xgboost_model import prepare_data, fit_classifier, predict_match, FEATURE_COLS, market_base_margin
+from xgboost_model import prepare_data, fit_classifier, predict_match, FEATURE_COLS, market_base_margin, \
+    fit_ensemble, predict_match_ensemble
 
 def actual_outcome(home_goals, away_goals):
     if home_goals > away_goals:
@@ -27,6 +28,15 @@ def devig(raw_odds):
     away = away / odds_value
 
     return {'Home': home, 'Draw': draw, 'Away': away}
+
+def conservative_prob(mean_prob: float, std: float, certainty_cap: float = 0.75) -> float:
+    """Risk-adjusted probability used for betting decisions
+    1. Shrink by one ensemble standard deviation distrust bets where the models
+       disagree with each other
+    2. A hard ceiling regardless of agreement
+    """
+    return min(max(mean_prob - std, 0.0), certainty_cap)
+
 
 def kelly_stake(model_prob, decimal_odds, fraction: float= 0.25, cap = 0.025):
     b = decimal_odds - 1 # Net odds, profit per unit staked if win
@@ -53,7 +63,8 @@ def sharpe_ratio(returns):
 def log_loss(actual_outcome, probs):
     return -np.log(probs[actual_outcome])
 
-def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, retrain_every_n_days = 15, min_edge = 0.02, balance = 1000):
+def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, retrain_every_n_days = 15,
+                                  min_edge = 0.02, balance = 1000):
 
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
@@ -138,7 +149,8 @@ def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, 
         'final_balance': balance,
     }
 
-def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=10, min_edge=0.02, balance=1000):
+def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=10, min_edge=0.02,
+                          max_edge=0.06, balance=1000):
     matches_df = prepare_data(matches_df)   # ONCE, globally, before any slicing
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
@@ -157,27 +169,35 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
             window_start += pd.Timedelta(days=retrain_every_n_days)
             continue
 
-        model = fit_classifier(train_df)
+        models = fit_ensemble(train_df)
 
         for idx, match in test_df.iterrows():
             row = test_df.loc[[idx]]
-            probs = predict_match(model, row[FEATURE_COLS], market_base_margin(row))
+            probs, uncertainty = predict_match_ensemble(models, row[FEATURE_COLS], market_base_margin(row))
 
             raw_odds = {'Home': match['decision_odds_home'], 'Draw': match['decision_odds_draw'], 'Away': match['decision_odds_away']}
             outcome = actual_outcome(match["home_goals"], match["away_goals"])
             market_probs = devig(raw_odds)
 
+            # Bet selection and sizing both act on the risk-adjusted probability
+            # calibration signal, unaffected by staking policy.
+            conservative_probs = {r: conservative_prob(probs[r], uncertainty[r]) for r in ['Home', 'Draw', 'Away']}
+
+            # Edges beyond max_edge are excluded: since the three edges
+            # sum to zero (model and market probabilities each sum to 1), an implausibly large
+            # edge is the only candidate most matches ever produce, so this mostly means
+            # skipping the match
             best_outcome, best_edge = None, min_edge
             for result in ['Home', 'Draw', 'Away']:
-                edge = probs[result] - market_probs[result]
-                if edge > best_edge:
+                edge = conservative_probs[result] - market_probs[result]
+                if min_edge < edge <= max_edge and edge > best_edge:
                     best_edge, best_outcome = edge, result
 
             stake = profit = 0.0
             bet_return = np.nan
             if best_outcome is not None:
                 odds = raw_odds[best_outcome]
-                stake = balance * kelly_stake(probs[best_outcome], odds)
+                stake = balance * kelly_stake(conservative_probs[best_outcome], odds)
                 profit = stake * (odds - 1) if outcome == best_outcome else -stake
                 balance += profit
                 bet_return = profit / stake if stake > 0 else 0.0
@@ -191,6 +211,7 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
                 'margin': abs(match['home_goals'] - match['away_goals']),
                 'actual_outcome': outcome,
                 'prob_home': probs['Home'], 'prob_draw': probs['Draw'], 'prob_away': probs['Away'],
+                'prob_home_std': uncertainty['Home'], 'prob_draw_std': uncertainty['Draw'], 'prob_away_std': uncertainty['Away'],
                 'market_home': market_probs['Home'], 'market_draw': market_probs['Draw'], 'market_away': market_probs['Away'],
                 'model_log_loss': log_loss(actual_outcome=outcome, probs=probs),
                 'market_log_loss': log_loss(actual_outcome=outcome, probs=market_probs),
@@ -224,6 +245,10 @@ def summarize_backtest(records: pd.DataFrame, starting_balance=1000) -> dict:
     }
 
 
-def xgb_walk_forward(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02, balance=1000):
-    records = xgb_walk_forward_loop(matches_df, training_days, retrain_every_n_days, min_edge, balance)
+def xgb_walk_forward(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02, max_edge=0.06,
+                     balance=1000):
+    records = xgb_walk_forward_loop(
+        matches_df, training_days=training_days, retrain_every_n_days=retrain_every_n_days,
+        min_edge=min_edge, max_edge=max_edge, balance=balance,
+    )
     return summarize_backtest(records, starting_balance=balance)

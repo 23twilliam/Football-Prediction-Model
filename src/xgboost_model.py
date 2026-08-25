@@ -53,6 +53,7 @@ def fit_classifier(
         colsample_bytree: float = 0.8,
         min_child_weight: float = 30,
         reg_lambda: float = 5,
+        random_state: int = 42,
 ):
     """matches_df must already be prepared via prepare_data()."""
     x = matches_df[FEATURE_COLS]
@@ -71,12 +72,20 @@ def fit_classifier(
         reg_lambda=reg_lambda,
 
         eval_metric="mlogloss",
-        random_state=42
+        random_state=random_state
     )
 
     model.fit(x, y, base_margin=base_margin)
 
     return model
+
+
+def fit_ensemble(matches_df: pd.DataFrame, n_models: int = 10, seed: int = 42, **kwargs):
+    """Bags n_models XGBoost fits, each with a different random_state (varies row/column
+    subsampling). Disagreement across the ensemble's predictions on the same match is a
+    proxy for how sensitive this walk-forward window's small training set (as few as 60-300
+    rows) is to which rows happened to get sampled"""
+    return [fit_classifier(matches_df, random_state=seed + i, **kwargs) for i in range(n_models)]
 
 
 def predict_match(
@@ -91,6 +100,19 @@ def predict_match(
         "Draw": probabilities[1],
         "Away": probabilities[2]
     }
+
+
+def predict_match_ensemble(models, x_row, base_margin):
+    """Mean and std of the bagged ensemble's predicted probabilities for one match. High std on
+    an outcome means this window's training data could have produced a very different
+    prediction for it less trusting an edge computed from it."""
+    all_probs = np.array([m.predict_proba(x_row, base_margin=base_margin)[0] for m in models])
+    mean = all_probs.mean(axis=0)
+    std = all_probs.std(axis=0)
+
+    probs = {"Home": mean[0], "Draw": mean[1], "Away": mean[2]}
+    uncertainty = {"Home": std[0], "Draw": std[1], "Away": std[2]}
+    return probs, uncertainty
 
 
 if __name__ == '__main__':
