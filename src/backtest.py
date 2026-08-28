@@ -152,11 +152,19 @@ def dixon_coles_walk_forward_loop(matches_df: pd.DataFrame, training_days = 30, 
         'final_balance': balance,
     }
 
-def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=10, min_edge=0.02,
-                          balance=1000, settlement_odds='decision'):
+def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=730, retrain_every_n_days=10, min_edge=0.02,
+                          balance=1000, settlement_odds='decision', n_models=10, feature_cols=None,
+                          **model_kwargs):
     """settlement_odds selects the price bets are PAID at ('decision'/'best'/'pinnacle').
     The devig anchor stays on decision odds regardless, so predictions, log loss and bet
-    selection are identical across settlement choices."""
+    selection are identical across settlement choices.
+
+    training_days is a WARM-UP, not a rolling window: train_df is always every match before the
+    current window, so this only controls when scoring starts, never how much data the model
+    sees. 730 = two full seasons, chosen because venue-split 5-match rolling features need ~19
+    home and ~19 away matches per team to fill, so one season leaves them still warming up and a
+    promoted team with none. At the previous 60, the first two evaluated seasons carried 83% of
+    all backtest losses purely from predicting on almost no history (FINDINGS.md §16)."""
     matches_df = prepare_data(matches_df)   # ONCE, globally, before any slicing
     matches_df = matches_df.sort_values(by=['date'])
     window_start = matches_df.date.min() + pd.Timedelta(days=training_days)
@@ -175,11 +183,12 @@ def xgb_walk_forward_loop(matches_df: pd.DataFrame, training_days=60, retrain_ev
             window_start += pd.Timedelta(days=retrain_every_n_days)
             continue
 
-        models = fit_ensemble(train_df)
+        models = fit_ensemble(train_df, n_models=n_models, feature_cols=feature_cols, **model_kwargs)
 
         for idx, match in test_df.iterrows():
             row = test_df.loc[[idx]]
-            probs, uncertainty = predict_match_ensemble(models, row[FEATURE_COLS], market_base_margin(row))
+            probs, uncertainty = predict_match_ensemble(
+                models, row[FEATURE_COLS if feature_cols is None else feature_cols], market_base_margin(row))
 
             raw_odds = odds_from(match, 'decision')        # probability anchor
             settle_odds = odds_from(match, settlement_odds)  # what the bet actually pays
@@ -247,7 +256,7 @@ def summarize_backtest(records: pd.DataFrame, starting_balance=1000) -> dict:
     }
 
 
-def xgb_walk_forward(matches_df: pd.DataFrame, training_days=60, retrain_every_n_days=6, min_edge=0.02,
+def xgb_walk_forward(matches_df: pd.DataFrame, training_days=730, retrain_every_n_days=6, min_edge=0.02,
                      balance=1000, settlement_odds='decision'):
     records = xgb_walk_forward_loop(
         matches_df, training_days=training_days, retrain_every_n_days=retrain_every_n_days,

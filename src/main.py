@@ -3,13 +3,13 @@ from pathlib import Path
 from data import load_seasons
 from backtest import dixon_coles_walk_forward_loop, xgb_walk_forward
 
+# Starts at 13/14: football-data's shots-on-target definition changed in summer 2013 (SoT/shots
+# ratio 0.55-0.57 before, 0.32-0.36 after, with total shots unchanged -- a measurement change,
+# not a football one). Since FEATURE_COLS is SoT-based, pooling across that break would train on
+# two different measurements. Pinnacle odds also only begin in 12/13.
 SEASONS = [
-    ('E01920.csv', '19/20'),
-    ('E02021.csv', '20/21'),
-    ('E02122.csv', '21/22'),
-    ('E02223.csv', '22/23'),
-    ('E02324.csv', '23/24'),
-    ('E02425.csv', '24/25'),
+    (f'E0{y % 100:02d}{(y + 1) % 100:02d}.csv', f'{y % 100:02d}/{(y + 1) % 100:02d}')
+    for y in range(2013, 2025)
 ]
 
 matches = load_seasons(Path('../data'), SEASONS)

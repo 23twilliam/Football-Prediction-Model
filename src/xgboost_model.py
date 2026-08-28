@@ -5,12 +5,25 @@ from pathlib import Path
 
 from data import load_football_data_csv, build_team_events, merge_team_events
 
-FEATURE_COLS = [
-    'home_rolling_mean_goals_for', 'home_rolling_mean_goals_against',
+RECENCY_COLS = [
     'home_days_since_last', 'home_matches_last_14d',
-    'away_rolling_mean_goals_for', 'away_rolling_mean_goals_against',
     'away_days_since_last', 'away_matches_last_14d',
 ]
+
+
+def feature_set(metrics) -> list:
+    """Venue-split rolling form features for the given metrics, plus recency. Metrics must be in
+    data.ROLLING_METRICS. They are correlated (goals<->SoT 0.71, shots<->SoT 0.81), i.e. one
+    signal at different noise levels rather than several, so combinations underperform the best
+    single metric."""
+    return [f'{side}_rolling_mean_{m}_{d}'
+            for side in ('home', 'away') for m in metrics for d in ('for', 'against')] + RECENCY_COLS
+
+
+# Shots on target ALONE beat every combination tested, including goals-only and all three
+# Goals are the noisiest measure of attacking strength, so once a
+# cleaner measure of the same quantity is present they add variance, not information.
+FEATURE_COLS = feature_set(['shots_on_target'])
 
 ODDS_COLS = ['decision_odds_home', 'decision_odds_draw', 'decision_odds_away']  # class order 0=Home,1=Draw,2=Away
 
@@ -48,17 +61,32 @@ def fit_classifier(
         matches_df: pd.DataFrame,
         n_estimators: int = 150,
         max_depth: int = 1,
-        learning_rate: float = 0.1,
-        subsample: float = 0.8,
+        learning_rate: float = 0.01,
+        subsample: float = 1.0,
         colsample_bytree: float = 0.8,
         min_child_weight: float = 30,
         reg_lambda: float = 5,
+        reg_alpha: float = 0,
+        gamma: float = 0,
         random_state: int = 42,
+        feature_cols=None,
+        time_decay: float = 0.0,
 ):
-    """matches_df must already be prepared via prepare_data()."""
-    x = matches_df[FEATURE_COLS]
+    """matches_df must already be prepared via prepare_data().
+
+    time_decay: exponential recency weighting, exp(-time_decay * days_before_latest_training
+    match). 0 disables it (every match counts equally, however old). Same form as
+    poisson_model.fit_attack_defence, which uses 0.002. Useful half-lives: 0.0005 ~ 3.8y,
+    0.001 ~ 1.9y, 0.002 ~ 0.95y, 0.004 ~ 0.5y. Matters more now that walk-forward windows span
+    up to 11 years, over which overround fell 6.1% -> 4.1% and home-win rate ranged 38-49%."""
+    x = matches_df[FEATURE_COLS if feature_cols is None else feature_cols]
     y = matches_df["result"]
     base_margin = market_base_margin(matches_df)
+
+    sample_weight = None
+    if time_decay > 0:
+        days_ago = (matches_df['date'].max() - matches_df['date']).dt.days
+        sample_weight = np.exp(-time_decay * days_ago)
 
     model = XGBClassifier(
         objective="multi:softprob",
@@ -70,12 +98,14 @@ def fit_classifier(
         colsample_bytree=colsample_bytree,
         min_child_weight=min_child_weight,
         reg_lambda=reg_lambda,
+        reg_alpha=reg_alpha,
+        gamma=gamma,
 
         eval_metric="mlogloss",
         random_state=random_state
     )
 
-    model.fit(x, y, base_margin=base_margin)
+    model.fit(x, y, base_margin=base_margin, sample_weight=sample_weight)
 
     return model
 
